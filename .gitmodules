@@ -1,0 +1,3 @@
+[submodule "TinyInst"]
+	path = TinyInst
+	url = https://github.com/richinseattle/TinyInst
