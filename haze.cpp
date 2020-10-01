@@ -30,8 +30,6 @@
 #include <filesystem>
 namespace fs = std::filesystem;
 
-
-
 LiteCov* instrumentation;
 bool persist;
 int num_iterations;
@@ -48,7 +46,8 @@ int target_argc;
 char** target_argv;
 unsigned int target_pid;
 
-
+unsigned int mutation_seed = 31337;
+unsigned int mut_count = 16;
 
 // run a single iteration over the target process
 // whether it's the whole process or target method
@@ -293,11 +292,6 @@ bool prepare_queue()
 bool fuzz_loop()
 {
 	Coverage coverage, newcoverage;
-	unsigned int mutation_seed = 31337;
-	mutation_seed = (unsigned int)time(NULL);
-	srand(mutation_seed);
-	std::cout << "random seed: " << mutation_seed << std::endl;
-
 
 	bool done = false;
 	uint64_t iteration = 0;
@@ -323,25 +317,17 @@ bool fuzz_loop()
 		std::vector<char> sample = file2vec(input_file_path.string());
 
 		auto start = std::chrono::high_resolution_clock::now();
-
+		 
 		long prev_elapsed = 0;
 		for (int i = 0; i < num_iterations; i++) {
 			iteration++;
-			if ((i + 1 % 1000) == 0) {
-				auto elapsed = std::chrono::high_resolution_clock::now() - start;
-				unsigned int ms = (unsigned int)std::chrono::duration_cast<std::chrono::milliseconds>(elapsed).count();
-				float secs = ((float)ms - (float)prev_elapsed) / 1000;
-				float execs = (float)i / secs;
-
-				std::cout << i << " iterations time elapsed: " << ms << "ms  current exec/s: " << execs << std::endl;
-			}
 
 			// init mutation records 
 			memset(mutations, 0, sizeof(mutations));
 
 			// mutate saved file buffer up to 16 times
-			int mut_count = rand() % 16;
-			for (auto i = 0; i < mut_count; i++)
+			int count = mut_count;
+			for (auto i = 0; i < count; i++)
 			{
 				unsigned int sample_offset = rand() % sample.size();
 				mutations[i].offset = sample_offset;
@@ -396,13 +382,16 @@ bool fuzz_loop()
 			memset(&mutations, 0, sizeof(mutations));
 
 		}
+		total_iterations += num_iterations;
 
 		auto elapsed = std::chrono::high_resolution_clock::now() - start;
 		unsigned int ms = (unsigned int)std::chrono::duration_cast<std::chrono::milliseconds>(elapsed).count();
 		//float secs = (float)ms / 1000;
 		float execs = (float)(num_iterations * 1000) / ms;
-		std::cout << num_iterations << " iterations complete. " << "Time elapsed: " << ms << "ms  average exec/s: " << execs << std::endl << std::endl;
-
+		std::cout << num_iterations << " iterations complete. " << "Time elapsed: " << ms << "ms  average exec/s: " << execs << std::endl;
+		//std::cout << std::endl; 
+		std::cout << total_iterations << " total iterations complete." << std::endl;
+		std::cout << std::endl;
 		//if (outfile) WriteCoverage(coverage, outfile);
 	}
 	return true;
@@ -439,6 +428,10 @@ int main(int argc, char** argv)
 	//char* outfile = GetOption("-coverage_file", argc, argv);
 	char* idir = GetOption("-i", argc, argv);
 	char* odir = GetOption("-o", argc, argv);
+	mut_count = GetIntOption("-mut_count", argc, argv, 16);
+	if (mut_count > 16) mut_count = 16;
+	unsigned int rseed = GetIntOption("-rseed", argc, argv, 0);
+
 
 	// validate required options 
 	if ((!target_argc && !pid) || !idir || !odir) {
@@ -513,8 +506,18 @@ int main(int argc, char** argv)
 		usage(argv);
 	}
 
+	if (rseed)
+		mutation_seed = rseed;
+	else
+		mutation_seed = (unsigned int)time(NULL);
+	srand(mutation_seed);
+	std::cout << "random seed: " << mutation_seed << std::endl;
+
+
 	// sort inputs by size, copy inputs that add new coverage to queue
 	prepare_queue();
+
+
 	fuzz_loop();
 
 	return 0;
