@@ -111,11 +111,13 @@ void RunTarget(int argc, char** argv, unsigned int pid, uint32_t timeout) {
 		status = instrumentation->Continue(timeout);
 	}
 
+	fs::path crashpath;
 	switch (status) {
 	case DEBUGGER_CRASHED:
 		printf("Process crashed\n");
 		instrumentation->Kill();
-		fs::copy_file(cur_input, crashdir.string() + std::string("/") + cur_input.filename().string());
+		crashpath = crashdir / std::to_string(rand());
+		fs::copy_file(cur_input, crashpath);
 		break;
 	case DEBUGGER_HANGED:
 		printf("Process hanged\n");
