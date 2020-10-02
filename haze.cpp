@@ -237,8 +237,6 @@ bool prepare_queue()
 			for(int i = 0; i < 10; i++)
 			{
 				std::error_code ec;
-//				std::cout << "error: removing .cur_input failed, sleeping and retrying.." << std::endl;
-//				std::cout << "Error: " << e.what() << '\n';
 				Sleep(10);
 
 				if (fs::remove(cur_input, ec))
@@ -249,20 +247,27 @@ bool prepare_queue()
 			}
 			if (!deleted)
 			{
-				printf("Error: .cur_input seems to be locked. Exiting..");
+				printf("Error: .cur_input seems to be locked[%s]. Exiting..", e.what());
 				exit(1);
 			}
 		}
-		fs::copy_file(input_path, cur_input);
+		try {
+			fs::copy_file(input_path, cur_input);
+		}		
+		catch (fs::filesystem_error& e) {
+			printf("Error: failed to copy input[%s] to cur_input: %s\n", (char *)input_path.c_str(), e.what());
+			exit(1);
+		}
 		RunTarget(target_argc, target_argv, target_pid, 0xFFFFFFFF);
 
 		Coverage newcoverage;
 
 		instrumentation->GetCoverage(newcoverage, true);
 		
+		std::string input_str = "size:" + std::to_string(fs::file_size(input_path)) + " " + input_path.string();
 		if (newcoverage.size() > 0)
 		{
-			std::cout << "[+] " << input_path.string() << '\n';						
+			std::cout << "[+] " << input_str << '\n';
 			std::string queue_path = outdir.string() + "/queue/" + std::to_string(queue_count) + "-" + input_path.filename().string();
 			fs::copy_file(input_path, queue_path);
 			queue_count += 1;
@@ -273,7 +278,7 @@ bool prepare_queue()
 		}
 		else
 		{
-			std::cout << "[-] " << input_path.string() << '\n';
+			std::cout << "[-] " << input_str << '\n';
 		}
 	}
 
@@ -291,6 +296,7 @@ bool prepare_queue()
 
 bool fuzz_loop()
 {
+	auto fuzz_loop_start_clock = std::chrono::high_resolution_clock::now();
 	Coverage coverage, newcoverage;
 
 	bool done = false;
@@ -311,12 +317,12 @@ bool fuzz_loop()
 		fs::path input_file_path = queuepaths[input_file_idx];
 
 		//printf("Mutating [%d/%d] for %d iterations: %ws\n", input_file_idx, queue_size, num_iterations, input_file_path.filename().c_str());
-		std::cout << "Mutating [" << input_file_idx << "/" << queue_size << "] for " << num_iterations << " iterations: " << input_file_path.filename().string() << std::endl;
+		std::cout << "Mutating [" << input_file_idx + 1 << "/" << queue_size << "] for " << num_iterations << " iterations: " << input_file_path.filename().string() << std::endl;
 
 
 		std::vector<char> sample = file2vec(input_file_path.string());
 
-		auto start = std::chrono::high_resolution_clock::now();
+		auto iteration_loop_start_clock = std::chrono::high_resolution_clock::now();
 		 
 		long prev_elapsed = 0;
 		for (int i = 0; i < num_iterations; i++) {
@@ -351,17 +357,14 @@ bool fuzz_loop()
 
 			if (newcoverage.size() > 0)
 			{
-				//id<queue number>-
-				std::string new_input_name = "id" + std::to_string(queue_size) + "-" + std::to_string(rand()) + "-" + input_file_path.filename().string();
+				std::string new_input_name = "id" + std::to_string(total_iterations + iteration) + "-" + input_file_path.filename().string();
 				fs::path new_input_path = queuedir / new_input_name;
 				try {
 					fs::copy_file(cur_input, new_input_path);
 				}
-				catch (fs::filesystem_error& e) {
-					std::cout << "Could not copy sandbox/abc: " << e.what() << '\n';
-					std::cout << "exception trying to .cur_input to queue, sleeping and tryin again. If this crashes, sleep longer?" << std::endl;
-					Sleep(20);
-					fs::copy_file(cur_input, new_input_path);
+				catch (fs::filesystem_error& e) { // throws if path already exists
+					printf("ERROR: failed to copy input with new coverage to queue [%s]: %s .. exiting.", (char *)new_input_path.c_str(), e.what());
+					exit(1);
 				}
 
 				queue_size++;
@@ -376,7 +379,7 @@ bool fuzz_loop()
 			MergeCoverage(coverage, newcoverage);
 
 			// restore mutated bytes to original 
-			for (auto i = 0; i < mut_count; i++)
+			for (unsigned int i = 0; i < mut_count; i++)
 				sample[mutations[i].offset] = mutations[i].old_value;
 
 			memset(&mutations, 0, sizeof(mutations));
@@ -384,13 +387,14 @@ bool fuzz_loop()
 		}
 		total_iterations += num_iterations;
 
-		auto elapsed = std::chrono::high_resolution_clock::now() - start;
-		unsigned int ms = (unsigned int)std::chrono::duration_cast<std::chrono::milliseconds>(elapsed).count();
+		auto fuzz_loop_elapsed = std::chrono::high_resolution_clock::now() - fuzz_loop_start_clock; 
+		auto iteration_loop_elapsed = std::chrono::high_resolution_clock::now() - iteration_loop_start_clock;
+		unsigned int ms = (unsigned int)std::chrono::duration_cast<std::chrono::milliseconds>(iteration_loop_elapsed).count();
 		//float secs = (float)ms / 1000;
 		float execs = (float)(num_iterations * 1000) / ms;
-		std::cout << num_iterations << " iterations complete. " << "Time elapsed: " << ms << "ms  average exec/s: " << execs << std::endl;
+		std::cout << num_iterations << " iterations complete. Time elapsed: " << ms << "ms  average exec/s: " << execs << std::endl;
 		//std::cout << std::endl; 
-		std::cout << total_iterations << " total iterations complete." << std::endl;
+		std::cout << total_iterations << " total iterations. Time elapsed: " << fuzz_loop_elapsed << std::endl;
 		std::cout << std::endl;
 		//if (outfile) WriteCoverage(coverage, outfile);
 	}
@@ -471,15 +475,35 @@ int main(int argc, char** argv)
 	{
 		//printf("error: output directory already exists.. exiting.\n");
 		//usage(argv);
-		std::cout << "WARNING: output directory already exists.. DELETING!" << std::endl;
+		printf("WARNING: output directory already exists.. DELETE? (y/N): ");
+		char c = getchar();
+		if (!(c == 'y' || c == 'Y'))
+			exit(0);
+		printf("\n");
+
 		try {
 			fs::remove_all(outdir);
 		}
-		catch (const std::exception& e) {
+		catch (fs::filesystem_error& e) {
+			printf("WARNING: error copying input with new coverage to queue (retrying): %s", e.what());
 			// delay and retry
-			Sleep(100);
-			if (!fs::remove_all(outdir))
+			bool success = false;
+			for (int i = 0; i < 10; i++)
+			{
+				std::error_code ec;
+				Sleep(10);
+				if (!fs::remove_all(outdir, ec))
+				{
+					success = true;
+					break;
+				}
+			}
+			if (!success)
+			{
+				printf("Error: .cur_input seems to be locked. Exiting..");
 				std::cout << "error: output directory already exists and couldnt delete.. exiting." << std::endl;
+				exit(1);
+			}
 		}
 	}
 	
