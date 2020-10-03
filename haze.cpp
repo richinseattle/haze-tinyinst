@@ -37,6 +37,7 @@ bool persist;
 int loop_iterations;
 int total_iterations;
 int persist_iteration;
+int persist_iterations;
 
 // percent of mutations done by libFuzzer mutator
 int mutate_libFuzzer_pct;
@@ -44,7 +45,7 @@ int mutate_libFuzzer_pct;
 
 fs::path input_path;
 fs::path out_path;
-fs::path crash_path;
+fs::path crashes_path;
 fs::path queue_path;
 fs::path cur_input_path;
 
@@ -121,7 +122,7 @@ void RunTarget(int argc, char** argv, unsigned int pid, uint32_t timeout) {
 	case DEBUGGER_CRASHED:
 		printf("Process crashed\n");
 		instrumentation->Kill();
-		crashpath = crash_path / std::to_string(rand());
+		crashpath = crashes_path / std::to_string(rand());
 		fs::copy_file(cur_input_path, crashpath);
 		break;
 	case DEBUGGER_HANGED:
@@ -148,7 +149,7 @@ void RunTarget(int argc, char** argv, unsigned int pid, uint32_t timeout) {
 		if (instrumentation->IsTargetFunctionDefined()) {
 			//printf("Target function returned normally\n");
 			persist_iteration++;
-			if (persist_iteration == loop_iterations) {
+			if (persist_iteration == persist_iterations) {
 				instrumentation->Kill();
 			}
 		}
@@ -275,8 +276,8 @@ bool prepare_queue()
 		if (newcoverage.size() > 0)
 		{
 			std::cout << "[+] " << input_str << '\n';
-			std::string queue_path = out_path.string() + "/queue/" + std::to_string(queue_count) + "-" + input_path.filename().string();
-			fs::copy_file(input_path, queue_path);
+			fs::path queue_input_path = queue_path / ("orig-" + input_path.filename().string());
+			fs::copy_file(input_path, queue_input_path);
 			queue_count += 1;
 
 			instrumentation->IgnoreCoverage(newcoverage);
@@ -428,7 +429,7 @@ bool fuzz_loop()
 				if(off < input_filename.size())
 					input_filename = input_filename.substr(input_filename.find('-') + 1);
 
-				std::string new_input_name = "id" + std::to_string(total_iterations + loop_iteration) + "-" + input_filename;
+				std::string new_input_name = "id" + std::to_string(total_iterations + loop_iteration) + "_" + mutator_name + "-" + input_filename;
 				fs::path new_input_path = queue_path / new_input_name;
 				try {
 					fs::copy_file(cur_input_path, new_input_path);
@@ -491,6 +492,7 @@ int main(int argc, char** argv)
 	
 	unsigned int pid = GetIntOption("-pid", argc, argv, 0);
 	persist = GetBinaryOption("-persist", argc, argv, false);
+	persist_iterations = GetIntOption("-persist_iterations", argc, argv, 10000);
 	loop_iterations = GetIntOption("-iterations", argc, argv, 1);
 	//char* outfile = GetOption("-coverage_file", argc, argv);
 	char* idir = GetOption("-i", argc, argv);
@@ -584,8 +586,8 @@ int main(int argc, char** argv)
 	}
 
 	// create output/crashes
-	crash_path = out_path / "crashes";
-	if (!fs::create_directory(crash_path))
+	crashes_path = out_path / "crashes";
+	if (!fs::create_directory(crashes_path))
 	{
 		std::cout << "error: could not create output directory.. exiting." << std::endl;
 		usage(argv);
