@@ -37,6 +37,9 @@ int num_iterations;
 int total_iterations;
 int cur_iteration;
 
+bool useLibFuzzer = false;
+
+
 fs::path indir;
 fs::path outdir;
 fs::path crashdir;
@@ -363,17 +366,22 @@ bool fuzz_loop()
 			bool libFuzzer = true;
 			std::string mutator_name;
 			
-			// 50% fuzzing split between libFuzzer and spray16
-			if (i < num_iterations / 2)
-			//if(true)
+			// 50% fuzzing split between libFuzzer and spray16 if -libFuzzer is passed 
+			if (useLibFuzzer && i < num_iterations / 2)
 			{
 				mutator_name = "libFuzzer";
-				std::vector<char> mutant(sample);
-				size_t ret = LLVMFuzzerMutate((uint8_t*)&mutant[0], mutant.size(), mutant.size());
+				//std::vector<char> mutant(sample);
+				int mut_max_size = sample.size() + 128;
+				char* mutant = (char *)malloc(mut_max_size);
+				memcpy(mutant, &sample[0], sample.size());
+				//mutant.reserve(mutant.size() + 128);
+				//size_t ret = LLVMFuzzerMutate((uint8_t*)&mutant[0], mutant.size(), mutant.size() + 128);
+				size_t ret = LLVMFuzzerMutate((uint8_t*)mutant, sample.size(), mut_max_size);
 
 				// write mutant to disk 
 				std::ofstream outf(cur_input, std::ios::out | std::ios::binary);
-				outf.write(&mutant[0], mutant.size());
+				//outf.write(&mutant[0], mutant.size());
+				outf.write(mutant, ret);
 				outf.flush();
 				outf.close();
 			}
@@ -489,7 +497,7 @@ int main(int argc, char** argv)
 	mut_count = GetIntOption("-mut_count", argc, argv, 16);
 	if (mut_count > 16) mut_count = 16;
 	unsigned int rseed = GetIntOption("-rseed", argc, argv, 0);
-
+	useLibFuzzer = GetBinaryOption("-libFuzzer", argc, argv, false);
 
 	// validate required options 
 	if ((!target_argc && !pid) || !idir || !odir) {
