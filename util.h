@@ -6,7 +6,10 @@
 #include <optional>
 #include <ostream>
 
-std::vector<char> file2vec(std::string path);
+#include <filesystem>
+namespace fs = std::filesystem;
+
+std::vector<char> file2vec(fs::path path);
 
 bool dir_exists(char* path);
 

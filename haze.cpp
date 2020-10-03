@@ -4,7 +4,8 @@
 //
 // cd C:\code\haze\out\build\x64-Release
 // haze.exe -i c:\code\fuzzdata\samples\ico -o ico -iterations 1000 -persist -target_module faster_gdiplus.exe -target_method fuzzit -nargs 1 -loop -instrument_module WindowsCodecs.dll -- c:\winafl\bin64\faster_gdiplus.exe @@
-// c:\code\haze\out\build\x64-Release\haze.exe --i c:\code\fuzzdata\samples\ico -o ico -iterations 1000 -persist -target_module faster_gdiplus.exe -target_method fuzzit -nargs 1 -loop -instrument_module WindowsCodecs.dll -- c:\winafl\bin64\faster_gdiplus.exe @@
+// c:\code\haze\out\build\x64-Release\haze.exe -i c:\code\fuzzdata\samples\ico -o ico -iterations 1000 -persist -target_module faster_gdiplus.exe -target_method fuzzit -nargs 1 -loop -instrument_module WindowsCodecs.dll -- c:\winafl\bin64\faster_gdiplus.exe @@
+// c:\code\haze\out\build\x64-Release\haze.exe -i c:\winafl\testcases\images\ico -o ico -iterations 1000 -persist -target_module faster_gdiplus.exe -target_method fuzzit -nargs 1 -loop -instrument_module WindowsCodecs.dll -- c:\winafl\bin64\faster_gdiplus.exe @@
 //
 
 
@@ -163,8 +164,9 @@ typedef struct {
 	uint8_t  new_value;
 } mutation;
 
-// do up to 16 mutations
-mutation mutations[16];
+// do up to MAX_MUTATIONS on a single input
+#define MAX_MUTATIONS 16
+mutation mutations[MAX_MUTATIONS];
 
 char* USAGE_STRING =
 "Usage:\n"
@@ -294,16 +296,44 @@ bool prepare_queue()
 	return 0;
 }
 
+void mutate_input()
+{
+
+}
+
+
+extern "C" size_t LLVMFuzzerMutate(uint8_t * Data, size_t Size, size_t MaxSize);
+extern "C" int    LLVMFuzzerRunDriver(int* argc, char*** argv, 
+							int (*UserCb)(const uint8_t * Data, size_t Size));
+extern "C" void   LLVMFuzzerMyInit(
+							int (*UserCb)(const uint8_t * Data,	size_t Size),
+							unsigned int Seed);
+extern "C" int dummy(const uint8_t * Data, size_t Size) {
+
+	(void)(Data);
+	(void)(Size);
+	fprintf(stderr, "dummy() called\n");
+	return 0;
+}
+
+#define MUTANT_MAX_SIZE 4096*4
+
+
 bool fuzz_loop()
 {
 	auto fuzz_loop_start_clock = std::chrono::high_resolution_clock::now();
 	Coverage coverage, newcoverage;
 
+	LLVMFuzzerMyInit(dummy, mutation_seed);
+
+//	char *mutant = (char *)calloc(1, MUTANT_MAX_SIZE);
+//	int mutant_size = MUTANT_MAX_SIZE;
+
 	bool done = false;
 	uint64_t iteration = 0;
 	while (!done)
 	{
-
+		// select random input from queue
 		std::vector<fs::path> queuepaths;
 		for (const auto& entry : fs::directory_iterator{ fs::directory_entry(queuedir) }) {
 			if (entry.is_regular_file()) {
@@ -316,39 +346,68 @@ bool fuzz_loop()
 		unsigned int input_file_idx = rand() % queue_size;
 		fs::path input_file_path = queuepaths[input_file_idx];
 
-		//printf("Mutating [%d/%d] for %d iterations: %ws\n", input_file_idx, queue_size, num_iterations, input_file_path.filename().c_str());
-		std::cout << "Mutating [" << input_file_idx + 1 << "/" << queue_size << "] for " << num_iterations << " iterations: " << input_file_path.filename().string() << std::endl;
+		auto sample = file2vec(input_file_path);
 
+		printf("Mutating [%d/%d] for %d iterations: %ws\n", input_file_idx + 1, queue_size, num_iterations, input_file_path.filename().c_str());
 
-		std::vector<char> sample = file2vec(input_file_path.string());
 
 		auto iteration_loop_start_clock = std::chrono::high_resolution_clock::now();
-		 
+
+		//memset(mutant, 0, mutant_size);
+		//memcpy(mutant, &sample[0], sample.size());
+
 		long prev_elapsed = 0;
 		for (int i = 0; i < num_iterations; i++) {
 			iteration++;
-
-			// init mutation records 
-			memset(mutations, 0, sizeof(mutations));
-
-			// mutate saved file buffer up to 16 times
-			int count = mut_count;
-			for (auto i = 0; i < count; i++)
+			
+			bool libFuzzer = true;
+			std::string mutator_name = "libFuzzer";
+			
+			// 50% fuzzing split between libFuzzer and spray16
+			if (iteration < num_iterations / 2)
+			//if(true)
 			{
-				unsigned int sample_offset = rand() % sample.size();
-				mutations[i].offset = sample_offset;
-				mutations[i].old_value = sample[sample_offset];
-				unsigned char fuzzbyte = rand() % 256;
-				mutations[i].new_value = fuzzbyte;
+				std::vector<char> mutant(sample);
+				size_t ret = LLVMFuzzerMutate((uint8_t*)&mutant[0], mutant.size(), mutant.size());
 
-				sample[sample_offset] = fuzzbyte;
+				// write mutant to disk 
+				std::ofstream outf(cur_input, std::ios::out | std::ios::binary);
+				outf.write(&mutant[0], mutant.size());
+				outf.flush();
+				outf.close();
+			}
+			else
+			{
+				mutator_name = "spray" + std::to_string(MAX_MUTATIONS);
+				// init mutation records 
+				memset(mutations, 0, sizeof(mutations));
+
+				// mutate saved file buffer up to 16 times
+				int count = mut_count;
+				for (auto i = 0; i < count; i++)
+				{
+					unsigned int sample_offset = rand() % sample.size();
+					mutations[i].offset = sample_offset;
+					mutations[i].old_value = sample[sample_offset];
+					unsigned char fuzzbyte = rand() % 256;
+					mutations[i].new_value = fuzzbyte;
+
+					sample[sample_offset] = fuzzbyte;
+				}
+
+				// write mutant to disk 
+				std::ofstream outf(cur_input, std::ios::out | std::ios::binary);
+				outf.write(&sample[0], sample.size());
+				outf.flush();
+				outf.close();
+
+				// restore mutated bytes to original 
+				for (unsigned int i = 0; i < mut_count; i++)
+					sample[mutations[i].offset] = mutations[i].old_value;
+
+				memset(&mutations, 0, sizeof(mutations));
 			}
 
-			// write mutant to disk 
-			std::ofstream outf(cur_input, std::ios::out | std::ios::binary);
-			outf.write(&sample[0], sample.size());
-			outf.flush();
-			outf.close();
 
 			RunTarget(target_argc, target_argv, target_pid, 0xFFFFFFFF);
 
@@ -371,18 +430,12 @@ bool fuzz_loop()
 			}
 			for (auto iter = newcoverage.begin(); iter != newcoverage.end(); iter++) {
 				//printf("    NEWCOV ### Iteration %6d: Found %d new offsets in %s\n", i, (int)iter->offsets.size(), iter->module_name);
-				std::cout << "    NEWCOV ### Iteration " << i << ": Found " << iter->offsets.size() << " new offsets in " << iter->module_name << std::endl;
+				std::cout << "    NEWCOV ### Iteration " << i << ": mutator[" + mutator_name + "] Found " << iter->offsets.size() << " new offsets in " << iter->module_name << std::endl;
 			}
 
 			instrumentation->IgnoreCoverage(newcoverage);
 
 			MergeCoverage(coverage, newcoverage);
-
-			// restore mutated bytes to original 
-			for (unsigned int i = 0; i < mut_count; i++)
-				sample[mutations[i].offset] = mutations[i].old_value;
-
-			memset(&mutations, 0, sizeof(mutations));
 
 		}
 		total_iterations += num_iterations;
@@ -485,7 +538,7 @@ int main(int argc, char** argv)
 			fs::remove_all(outdir);
 		}
 		catch (fs::filesystem_error& e) {
-			printf("WARNING: error copying input with new coverage to queue (retrying): %s", e.what());
+			printf("WARNING: error deleteing output directory (retrying): %s", e.what());
 			// delay and retry
 			bool success = false;
 			for (int i = 0; i < 10; i++)
@@ -500,13 +553,13 @@ int main(int argc, char** argv)
 			}
 			if (!success)
 			{
-				printf("Error: .cur_input seems to be locked. Exiting..");
-				std::cout << "error: output directory already exists and couldnt delete.. exiting." << std::endl;
+				printf("Error: output directory already exists and couldnt delete. Exiting..");
 				exit(1);
 			}
 		}
 	}
-	
+	Sleep(100);
+
 	// create output directory	
 	if (!fs::create_directory(outdir))
 	{
@@ -529,6 +582,9 @@ int main(int argc, char** argv)
 		std::cout << "error: could not create output directory.. exiting." << std::endl;
 		usage(argv);
 	}
+	// Sleep to avoid filesystem sync issues. 
+	Sleep(100);
+
 
 	if (rseed)
 		mutation_seed = rseed;
@@ -540,7 +596,6 @@ int main(int argc, char** argv)
 
 	// sort inputs by size, copy inputs that add new coverage to queue
 	prepare_queue();
-
 
 	fuzz_loop();
 

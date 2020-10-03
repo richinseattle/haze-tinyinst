@@ -9,14 +9,13 @@ namespace fs = std::filesystem;
 // migrate OS specific stuff later
 #include <Shlobj.h>
 
-std::vector<char> file2vec(std::string path)
+std::vector<char> file2vec(fs::path path)
 {
-	std::ifstream is((char *)(path.c_str()), std::ios::in | std::ios::binary | SH_DENYNO);
+	std::ifstream is(path, std::ios::in | std::ios::binary | SH_DENYNO);
 	is.seekg(0, std::ios_base::end);
 	std::size_t sample_size = is.tellg();
 	is.seekg(0, std::ios_base::beg);
 	std::vector<char> bytes(sample_size);
-
 	//printf("SAMPLE SIZE: %d", sample_size);
 	// Load the data
 	is.read(&bytes[0], sample_size);
