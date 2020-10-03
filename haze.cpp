@@ -498,7 +498,7 @@ int main(int argc, char** argv)
 	max_mut_count = GetIntOption("-mut_count", argc, argv, 16);
 	if (max_mut_count > 16) max_mut_count = 16;
 	unsigned int rseed = GetIntOption("-rseed", argc, argv, 0);
-	mutate_libFuzzer_pct = GetIntOption("-libFuzzer", argc, argv, false);
+	mutate_libFuzzer_pct = GetIntOption("-libFuzzer", argc, argv, 20);
 
 	// validate required options 
 	if ((!target_argc && !pid) || !idir || !odir) {
