@@ -2,12 +2,8 @@
 // Haze - a binary fuzzer
 // rjohnson@fuzzing.io
 //
-// cd C:\code\haze\out\build\x64-Release
-// haze.exe -i c:\code\fuzzdata\samples\ico -o ico -iterations 1000 -target_module faster_gdiplus.exe -target_method fuzzit -nargs 1 -loop -instrument_module WindowsCodecs.dll -- c:\winafl\bin64\faster_gdiplus.exe @@
-// c:\code\haze\out\build\x64-Release\haze.exe -i c:\code\fuzzdata\samples\ico -o ico -iterations 1000 -persist -target_module faster_gdiplus.exe -target_method fuzzit -nargs 1 -loop -instrument_module WindowsCodecs.dll -- c:\winafl\bin64\faster_gdiplus.exe @@
-// c:\code\haze\out\build\x64-Release\haze.exe -i c:\winafl\testcases\images\ico -o ico -iterations 1000 -persist -target_module faster_gdiplus.exe -target_method fuzzit -nargs 1 -loop -instrument_module WindowsCodecs.dll -- c:\winafl\bin64\faster_gdiplus.exe @@
+// c:\code\haze\out\build\x64-Release\haze.exe -i c:\winafl\testcases\images\gif -o gif -target_module faster_gdiplus.exe -target_method fuzzit -nargs 1 -loop -instrument_module WindowsCodecs.dll -libFuzzer 20 -cov_type edge -cmp_coverage  -- c:\winafl\bin32\faster_gdiplus.exe @@  2>nul//
 //
-
 
 #define  _CRT_SECURE_NO_WARNINGS
 
@@ -364,31 +360,36 @@ bool fuzz_loop()
 			std::string mutator_name;
 			
 			// Use libFuzzer mutate_libFuzzer_pct% of the time and spray16 the rest if -libFuzzer is passed 
-			if (loop_iteration < loop_iterations * (mutate_libFuzzer_pct/100.0))
+			if (loop_iteration * 100 <= loop_iterations * mutate_libFuzzer_pct)			
 			{
-				mutator_name = "libFuzzer";
+				auto mut_count = (rand() % (max_mut_count - 1)) + 1;
+				mutator_name = "libFuzzer" + std::to_string(mut_count);
 
 				// allow mutation to grow input by up to 128 bytes
-				int mut_max_size = sample.size() + 128;
+				int mut_max_size = sample.size() + 512;
 
 				//std::vector<char> mutant(sample);
-				//mutant.reserve(mutant.size() + 128);
-				//size_t ret = LLVMFuzzerMutate((uint8_t*)&mutant[0], mutant.size(), mutant.size() + 128);
+				//mutant.reserve(mut_max_size);
+				//size_t ret = LLVMFuzzerMutate((uint8_t*)&mutant[0], mutant.size(), mut_max_size);
 				char* mutant = (char *)calloc(1, mut_max_size);
 				memcpy(mutant, &sample[0], sample.size());
-				size_t ret = LLVMFuzzerMutate((uint8_t*)mutant, sample.size(), mut_max_size);
+				auto size = sample.size();
+
+				// this performs a lot better at finding new paths than single iterations, but may need to be modified later
+				for(auto i = 0; i < mut_count + 1; i++)
+					size = LLVMFuzzerMutate((uint8_t*)mutant, size, mut_max_size);
 
 				// write mutant to disk 
 				std::ofstream outf(cur_input_path, std::ios::out | std::ios::binary);
 				//outf.write(&mutant[0], ret);
-				outf.write(mutant, ret);
+				outf.write(mutant, size);
 				outf.flush();
 				outf.close();
 				free(mutant);
 			}
 			else
 			{
-				auto mut_count = rand() % max_mut_count;
+				auto mut_count = (rand() % (max_mut_count - 1)) + 1;
 				mutator_name = "spray" + std::to_string(mut_count);
 				
 				// init mutation records 
