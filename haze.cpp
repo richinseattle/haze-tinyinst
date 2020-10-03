@@ -3,7 +3,7 @@
 // rjohnson@fuzzing.io
 //
 // cd C:\code\haze\out\build\x64-Release
-// haze.exe -i c:\code\fuzzdata\samples\ico -o ico -iterations 1000 -persist -target_module faster_gdiplus.exe -target_method fuzzit -nargs 1 -loop -instrument_module WindowsCodecs.dll -- c:\winafl\bin64\faster_gdiplus.exe @@
+// haze.exe -i c:\code\fuzzdata\samples\ico -o ico -iterations 1000 -target_module faster_gdiplus.exe -target_method fuzzit -nargs 1 -loop -instrument_module WindowsCodecs.dll -- c:\winafl\bin64\faster_gdiplus.exe @@
 // c:\code\haze\out\build\x64-Release\haze.exe -i c:\code\fuzzdata\samples\ico -o ico -iterations 1000 -persist -target_module faster_gdiplus.exe -target_method fuzzit -nargs 1 -loop -instrument_module WindowsCodecs.dll -- c:\winafl\bin64\faster_gdiplus.exe @@
 // c:\code\haze\out\build\x64-Release\haze.exe -i c:\winafl\testcases\images\ico -o ico -iterations 1000 -persist -target_module faster_gdiplus.exe -target_method fuzzit -nargs 1 -loop -instrument_module WindowsCodecs.dll -- c:\winafl\bin64\faster_gdiplus.exe @@
 //
@@ -131,7 +131,7 @@ void RunTarget(int argc, char** argv, unsigned int pid, uint32_t timeout) {
 		break;
 	case DEBUGGER_IGNORE_EXCEPTION:
 		//printf("IGNORE EXCEPTION\n");
-		instrumentation->Kill();
+		instrumentation->Kill();		
 		// delay to avoid hitting files system error writing new input
 		//printf("Sleep(10) in DEBUGGER_IGNORE_EXCEPTION");
 		//Sleep(10);
@@ -275,10 +275,11 @@ bool prepare_queue()
 		std::string input_str = "size:" + std::to_string(fs::file_size(input_path)) + " " + input_path.string();
 		if (newcoverage.size() > 0)
 		{
-			std::cout << "[+] " << input_str << '\n';
-			fs::path queue_input_path = queue_path / ("orig-" + input_path.filename().string());
-			fs::copy_file(input_path, queue_input_path);
 			queue_count += 1;
+
+			std::cout << "[+] " << input_str << '\n';
+			fs::path queue_input_path = queue_path / ("id" + std::to_string(queue_count) + "_orig-" + input_path.filename().string());
+			fs::copy_file(input_path, queue_input_path);
 
 			instrumentation->IgnoreCoverage(newcoverage);
 
@@ -424,12 +425,27 @@ bool fuzz_loop()
 			instrumentation->GetCoverage(newcoverage, true);
 			if (newcoverage.size() > 0)
 			{
-				auto input_filename = input_file_path.filename().string();
-				int off = input_filename.find('-') + 1;
-				if(off < input_filename.size())
-					input_filename = input_filename.substr(input_filename.find('-') + 1);
+				int total_new_offsets = 0;
+				for (auto iter = newcoverage.begin(); iter != newcoverage.end(); iter++) {
+					total_new_offsets += iter->offsets.size();
+					//printf("    NEWCOV ### Iteration %6d: Found %d new offsets in %s\n", i, (int)iter->offsets.size(), iter->module_name);
+					std::cout << "    NEWCOV ### Iteration " << std::to_string(total_iterations + loop_iteration) << ": mutator[" + mutator_name + "] Found " << iter->offsets.size() << " new offsets in " << iter->module_name << std::endl;
+				}
 
-				std::string new_input_name = "id" + std::to_string(total_iterations + loop_iteration) + "_" + mutator_name + "-" + input_filename;
+				auto input_filename = input_file_path.filename().string();
+				int off;
+				
+				off = input_filename.find('_');
+				std::string previd_str;
+				if (off < input_filename.size())
+					previd_str = input_filename.substr(0, off);
+
+				off = input_filename.find('-') + 1;
+				if(off < input_filename.size())
+					input_filename = input_filename.substr(off);
+
+
+				std::string new_input_name = "id" + std::to_string(total_iterations + loop_iteration) + "_" + mutator_name + "_" + std::to_string(total_new_offsets) + "new-" + previd_str;
 				fs::path new_input_path = queue_path / new_input_name;
 				try {
 					fs::copy_file(cur_input_path, new_input_path);
@@ -440,10 +456,6 @@ bool fuzz_loop()
 				}
 
 				queue_size++;
-			}
-			for (auto iter = newcoverage.begin(); iter != newcoverage.end(); iter++) {
-				//printf("    NEWCOV ### Iteration %6d: Found %d new offsets in %s\n", i, (int)iter->offsets.size(), iter->module_name);
-				std::cout << "    NEWCOV ### Iteration " << std::to_string(total_iterations + loop_iteration) << ": mutator[" + mutator_name + "] Found " << iter->offsets.size() << " new offsets in " << iter->module_name << std::endl;
 			}
 
 			instrumentation->IgnoreCoverage(newcoverage);
@@ -491,9 +503,9 @@ int main(int argc, char** argv)
 	memcpy(target_argv, orig_target_argv, target_argc * sizeof(char*));
 	
 	unsigned int pid = GetIntOption("-pid", argc, argv, 0);
-	persist = GetBinaryOption("-persist", argc, argv, false);
-	persist_iterations = GetIntOption("-persist_iterations", argc, argv, 10000);
-	loop_iterations = GetIntOption("-iterations", argc, argv, 1);
+	persist = GetBinaryOption("-persist", argc, argv, true);
+	persist_iterations = GetIntOption("-persist_iterations", argc, argv, 100000);
+	loop_iterations = GetIntOption("-iterations", argc, argv, 500);
 	//char* outfile = GetOption("-coverage_file", argc, argv);
 	char* idir = GetOption("-i", argc, argv);
 	char* odir = GetOption("-o", argc, argv);
