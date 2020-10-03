@@ -361,12 +361,13 @@ bool fuzz_loop()
 			iteration++;
 			
 			bool libFuzzer = true;
-			std::string mutator_name = "libFuzzer";
+			std::string mutator_name;
 			
 			// 50% fuzzing split between libFuzzer and spray16
-			if (iteration < num_iterations / 2)
+			if (i < num_iterations / 2)
 			//if(true)
 			{
+				mutator_name = "libFuzzer";
 				std::vector<char> mutant(sample);
 				size_t ret = LLVMFuzzerMutate((uint8_t*)&mutant[0], mutant.size(), mutant.size());
 
