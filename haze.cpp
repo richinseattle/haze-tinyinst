@@ -33,25 +33,27 @@ namespace fs = std::filesystem;
 
 LiteCov* instrumentation;
 bool persist;
-int num_iterations;
+
+int loop_iterations;
 int total_iterations;
-int cur_iteration;
+int persist_iteration;
 
-bool useLibFuzzer = false;
+// percent of mutations done by libFuzzer mutator
+int mutate_libFuzzer_pct;
 
 
-fs::path indir;
-fs::path outdir;
-fs::path crashdir;
-fs::path queuedir;
-fs::path cur_input;
+fs::path input_path;
+fs::path out_path;
+fs::path crash_path;
+fs::path queue_path;
+fs::path cur_input_path;
 
 int target_argc;
 char** target_argv;
 unsigned int target_pid;
 
 unsigned int mutation_seed = 31337;
-unsigned int mut_count = 16;
+unsigned int max_mut_count = 16;
 
 // run a single iteration over the target process
 // whether it's the whole process or target method
@@ -72,7 +74,7 @@ void RunTarget(int argc, char** argv, unsigned int pid, uint32_t timeout) {
 	}
 	else {
 		instrumentation->Kill();
-		cur_iteration = 0;
+		persist_iteration = 0;
 		if (argc) {
 			status = instrumentation->Run(argc, argv, timeout);
 		}
@@ -88,7 +90,7 @@ void RunTarget(int argc, char** argv, unsigned int pid, uint32_t timeout) {
 			// try again with a clean process
 			WARN("Target function not reached, retrying with a clean process\n");
 			instrumentation->Kill();
-			cur_iteration = 0;
+			persist_iteration = 0;
 			status = instrumentation->Run(argc, argv, timeout);
 		}
 
@@ -119,8 +121,8 @@ void RunTarget(int argc, char** argv, unsigned int pid, uint32_t timeout) {
 	case DEBUGGER_CRASHED:
 		printf("Process crashed\n");
 		instrumentation->Kill();
-		crashpath = crashdir / std::to_string(rand());
-		fs::copy_file(cur_input, crashpath);
+		crashpath = crash_path / std::to_string(rand());
+		fs::copy_file(cur_input_path, crashpath);
 		break;
 	case DEBUGGER_HANGED:
 		printf("Process hanged\n");
@@ -145,8 +147,8 @@ void RunTarget(int argc, char** argv, unsigned int pid, uint32_t timeout) {
 	case DEBUGGER_TARGET_END:
 		if (instrumentation->IsTargetFunctionDefined()) {
 			//printf("Target function returned normally\n");
-			cur_iteration++;
-			if (cur_iteration == num_iterations) {
+			persist_iteration++;
+			if (persist_iteration == loop_iterations) {
 				instrumentation->Kill();
 			}
 		}
@@ -211,7 +213,7 @@ bool prepare_queue()
 	
 	// get input files 
 	std::vector<fs::path> input_filepaths;
-	for (const auto& entry : fs::directory_iterator{ fs::directory_entry(indir) }) {
+	for (const auto& entry : fs::directory_iterator{ fs::directory_entry(input_path) }) {
 		if (entry.is_regular_file()) {
 			input_filepaths.push_back(entry.path().string());
 		}
@@ -231,10 +233,10 @@ bool prepare_queue()
 	for (const auto& input_path : input_filepaths) {
 		num_iterations++;
 
-		cur_input = outdir / ".cur_input";
+		cur_input_path = out_path / ".cur_input";
 		try {
-			if (fs::is_regular_file(cur_input))
-				fs::remove(cur_input);
+			if (fs::is_regular_file(cur_input_path))
+				fs::remove(cur_input_path);
 		}
 		catch (fs::filesystem_error& e) {
 			// delay and retry
@@ -244,7 +246,7 @@ bool prepare_queue()
 				std::error_code ec;
 				Sleep(10);
 
-				if (fs::remove(cur_input, ec))
+				if (fs::remove(cur_input_path, ec))
 				{
 					deleted = true;
 					break;
@@ -257,7 +259,7 @@ bool prepare_queue()
 			}
 		}
 		try {
-			fs::copy_file(input_path, cur_input);
+			fs::copy_file(input_path, cur_input_path);
 		}		
 		catch (fs::filesystem_error& e) {
 			printf("Error: failed to copy input[%s] to cur_input: %s\n", (char *)input_path.c_str(), e.what());
@@ -273,7 +275,7 @@ bool prepare_queue()
 		if (newcoverage.size() > 0)
 		{
 			std::cout << "[+] " << input_str << '\n';
-			std::string queue_path = outdir.string() + "/queue/" + std::to_string(queue_count) + "-" + input_path.filename().string();
+			std::string queue_path = out_path.string() + "/queue/" + std::to_string(queue_count) + "-" + input_path.filename().string();
 			fs::copy_file(input_path, queue_path);
 			queue_count += 1;
 
@@ -333,12 +335,12 @@ bool fuzz_loop()
 //	int mutant_size = MUTANT_MAX_SIZE;
 
 	bool done = false;
-	uint64_t iteration = 0;
+	uint64_t loop_iteration = 0;
 	while (!done)
 	{
 		// select random input from queue
 		std::vector<fs::path> queuepaths;
-		for (const auto& entry : fs::directory_iterator{ fs::directory_entry(queuedir) }) {
+		for (const auto& entry : fs::directory_iterator{ fs::directory_entry(queue_path) }) {
 			if (entry.is_regular_file()) {
 				queuepaths.push_back(entry.path());
 			}
@@ -351,61 +353,60 @@ bool fuzz_loop()
 
 		auto sample = file2vec(input_file_path);
 
-		printf("Mutating [%d/%d] for %d iterations: %ws\n", input_file_idx + 1, queue_size, num_iterations, input_file_path.filename().c_str());
+		printf("Mutating [%d/%d] for %d iterations: %ws\n", input_file_idx + 1, queue_size, loop_iterations, input_file_path.filename().c_str());
 
 
 		auto iteration_loop_start_clock = std::chrono::high_resolution_clock::now();
-
-		//memset(mutant, 0, mutant_size);
-		//memcpy(mutant, &sample[0], sample.size());
-
 		long prev_elapsed = 0;
-		for (int i = 0; i < num_iterations; i++) {
-			iteration++;
-			
-			bool libFuzzer = true;
+		for (loop_iteration = 1; loop_iteration <= loop_iterations; loop_iteration++) {
 			std::string mutator_name;
 			
-			// 50% fuzzing split between libFuzzer and spray16 if -libFuzzer is passed 
-			if (useLibFuzzer && i < num_iterations / 2)
+			// Use libFuzzer mutate_libFuzzer_pct% of the time and spray16 the rest if -libFuzzer is passed 
+			if (loop_iteration < loop_iterations * (mutate_libFuzzer_pct/100.0))
 			{
 				mutator_name = "libFuzzer";
-				//std::vector<char> mutant(sample);
+
+				// allow mutation to grow input by up to 128 bytes
 				int mut_max_size = sample.size() + 128;
-				char* mutant = (char *)malloc(mut_max_size);
-				memcpy(mutant, &sample[0], sample.size());
+
+				//std::vector<char> mutant(sample);
 				//mutant.reserve(mutant.size() + 128);
 				//size_t ret = LLVMFuzzerMutate((uint8_t*)&mutant[0], mutant.size(), mutant.size() + 128);
+				char* mutant = (char *)calloc(1, mut_max_size);
+				memcpy(mutant, &sample[0], sample.size());
 				size_t ret = LLVMFuzzerMutate((uint8_t*)mutant, sample.size(), mut_max_size);
 
 				// write mutant to disk 
-				std::ofstream outf(cur_input, std::ios::out | std::ios::binary);
-				//outf.write(&mutant[0], mutant.size());
+				std::ofstream outf(cur_input_path, std::ios::out | std::ios::binary);
+				//outf.write(&mutant[0], ret);
 				outf.write(mutant, ret);
 				outf.flush();
 				outf.close();
+				free(mutant);
 			}
 			else
 			{
-				mutator_name = "spray" + std::to_string(MAX_MUTATIONS);
+				auto mut_count = rand() % max_mut_count;
+				mutator_name = "spray" + std::to_string(mut_count);
+				
 				// init mutation records 
 				memset(mutations, 0, sizeof(mutations));
 
-				// mutate saved file buffer up to 16 times
-				int count = mut_count;
-				for (auto i = 0; i < count; i++)
+				// generate mutation actions
+				for (auto i = 0; i < mut_count; i++)
 				{
 					unsigned int sample_offset = rand() % sample.size();
 					mutations[i].offset = sample_offset;
 					mutations[i].old_value = sample[sample_offset];
-					unsigned char fuzzbyte = rand() % 256;
-					mutations[i].new_value = fuzzbyte;
-
-					sample[sample_offset] = fuzzbyte;
+					mutations[i].new_value = rand() % 256;
 				}
 
+				// apply mutations
+				for (auto i = 0; i < mut_count; i++)
+					sample[mutations[i].offset] = mutations[i].new_value;				
+
 				// write mutant to disk 
-				std::ofstream outf(cur_input, std::ios::out | std::ios::binary);
+				std::ofstream outf(cur_input_path, std::ios::out | std::ios::binary);
 				outf.write(&sample[0], sample.size());
 				outf.flush();
 				outf.close();
@@ -414,21 +415,23 @@ bool fuzz_loop()
 				for (unsigned int i = 0; i < mut_count; i++)
 					sample[mutations[i].offset] = mutations[i].old_value;
 
-				memset(&mutations, 0, sizeof(mutations));
 			}
-
 
 			RunTarget(target_argc, target_argv, target_pid, 0xFFFFFFFF);
 
 			Coverage newcoverage;
 			instrumentation->GetCoverage(newcoverage, true);
-
 			if (newcoverage.size() > 0)
 			{
-				std::string new_input_name = "id" + std::to_string(total_iterations + iteration) + "-" + input_file_path.filename().string();
-				fs::path new_input_path = queuedir / new_input_name;
+				auto input_filename = input_file_path.filename().string();
+				int off = input_filename.find('-') + 1;
+				if(off < input_filename.size())
+					input_filename = input_filename.substr(input_filename.find('-') + 1);
+
+				std::string new_input_name = "id" + std::to_string(total_iterations + loop_iteration) + "-" + input_filename;
+				fs::path new_input_path = queue_path / new_input_name;
 				try {
-					fs::copy_file(cur_input, new_input_path);
+					fs::copy_file(cur_input_path, new_input_path);
 				}
 				catch (fs::filesystem_error& e) { // throws if path already exists
 					printf("ERROR: failed to copy input with new coverage to queue [%s]: %s .. exiting.", (char *)new_input_path.c_str(), e.what());
@@ -439,7 +442,7 @@ bool fuzz_loop()
 			}
 			for (auto iter = newcoverage.begin(); iter != newcoverage.end(); iter++) {
 				//printf("    NEWCOV ### Iteration %6d: Found %d new offsets in %s\n", i, (int)iter->offsets.size(), iter->module_name);
-				std::cout << "    NEWCOV ### Iteration " << i << ": mutator[" + mutator_name + "] Found " << iter->offsets.size() << " new offsets in " << iter->module_name << std::endl;
+				std::cout << "    NEWCOV ### Iteration " << std::to_string(total_iterations + loop_iteration) << ": mutator[" + mutator_name + "] Found " << iter->offsets.size() << " new offsets in " << iter->module_name << std::endl;
 			}
 
 			instrumentation->IgnoreCoverage(newcoverage);
@@ -447,15 +450,13 @@ bool fuzz_loop()
 			MergeCoverage(coverage, newcoverage);
 
 		}
-		total_iterations += num_iterations;
+		total_iterations += loop_iterations;
 
 		auto fuzz_loop_elapsed = std::chrono::high_resolution_clock::now() - fuzz_loop_start_clock; 
 		auto iteration_loop_elapsed = std::chrono::high_resolution_clock::now() - iteration_loop_start_clock;
 		unsigned int ms = (unsigned int)std::chrono::duration_cast<std::chrono::milliseconds>(iteration_loop_elapsed).count();
-		//float secs = (float)ms / 1000;
-		float execs = (float)(num_iterations * 1000) / ms;
-		std::cout << num_iterations << " iterations complete. Time elapsed: " << ms << "ms  average exec/s: " << execs << std::endl;
-		//std::cout << std::endl; 
+		float execs = (float)(loop_iterations * 1000) / ms;
+		std::cout << loop_iterations << " iterations complete. Time elapsed: " << ms << "ms  average exec/s: " << execs << std::endl;
 		std::cout << total_iterations << " total iterations. Time elapsed: " << fuzz_loop_elapsed << std::endl;
 		std::cout << std::endl;
 		//if (outfile) WriteCoverage(coverage, outfile);
@@ -490,14 +491,14 @@ int main(int argc, char** argv)
 	
 	unsigned int pid = GetIntOption("-pid", argc, argv, 0);
 	persist = GetBinaryOption("-persist", argc, argv, false);
-	num_iterations = GetIntOption("-iterations", argc, argv, 1);
+	loop_iterations = GetIntOption("-iterations", argc, argv, 1);
 	//char* outfile = GetOption("-coverage_file", argc, argv);
 	char* idir = GetOption("-i", argc, argv);
 	char* odir = GetOption("-o", argc, argv);
-	mut_count = GetIntOption("-mut_count", argc, argv, 16);
-	if (mut_count > 16) mut_count = 16;
+	max_mut_count = GetIntOption("-mut_count", argc, argv, 16);
+	if (max_mut_count > 16) max_mut_count = 16;
 	unsigned int rseed = GetIntOption("-rseed", argc, argv, 0);
-	useLibFuzzer = GetBinaryOption("-libFuzzer", argc, argv, false);
+	mutate_libFuzzer_pct = GetIntOption("-libFuzzer", argc, argv, false);
 
 	// validate required options 
 	if ((!target_argc && !pid) || !idir || !odir) {
@@ -505,9 +506,9 @@ int main(int argc, char** argv)
 	}
 
 	target_pid = pid;
-	indir = fs::path(idir);
-	outdir = fs::path(odir);
-	cur_input = outdir / ".cur_input";
+	input_path = fs::path(idir);
+	out_path = fs::path(odir);
+	cur_input_path = out_path / ".cur_input";
 
 	// replace target argv @@ with file path, exit if not found
 	bool atat_found = false;
@@ -515,7 +516,7 @@ int main(int argc, char** argv)
 	{
 		if (!strcmp(target_argv[i], "@@"))
 		{
-			target_argv[i] = (char *)_strdup(cur_input.string().c_str());
+			target_argv[i] = (char *)_strdup(cur_input_path.string().c_str());
 			atat_found = true;
 		}
 	}
@@ -526,17 +527,15 @@ int main(int argc, char** argv)
 	}
 
 	// check input dir exists 
-	if (!fs::is_directory(indir))
+	if (!fs::is_directory(input_path))
 	{
 		std::cout << "error: invalid input directory.. exiting" << std::endl;
 		usage(argv);
 	}
 
 	// check and create output directory tree 
-	if (fs::is_directory(outdir))
+	if (fs::is_directory(out_path))
 	{
-		//printf("error: output directory already exists.. exiting.\n");
-		//usage(argv);
 		printf("WARNING: output directory already exists.. DELETE? (y/N): ");
 		char c = getchar();
 		if (!(c == 'y' || c == 'Y'))
@@ -544,7 +543,7 @@ int main(int argc, char** argv)
 		printf("\n");
 
 		try {
-			fs::remove_all(outdir);
+			fs::remove_all(out_path);
 		}
 		catch (fs::filesystem_error& e) {
 			printf("WARNING: error deleteing output directory (retrying): %s", e.what());
@@ -554,7 +553,7 @@ int main(int argc, char** argv)
 			{
 				std::error_code ec;
 				Sleep(10);
-				if (!fs::remove_all(outdir, ec))
+				if (!fs::remove_all(out_path, ec))
 				{
 					success = true;
 					break;
@@ -570,23 +569,23 @@ int main(int argc, char** argv)
 	Sleep(100);
 
 	// create output directory	
-	if (!fs::create_directory(outdir))
+	if (!fs::create_directory(out_path))
 	{
 		std::cout << "error: could not create output directory.. exiting." << std::endl;
 		usage(argv);
 	}
 
 	// create output/queue
-	queuedir = outdir / "queue";
-	if (!fs::create_directory(queuedir))
+	queue_path = out_path / "queue";
+	if (!fs::create_directory(queue_path))
 	{
 		std::cout << "error: could not create output directory.. exiting." << std::endl;
 		usage(argv);
 	}
 
 	// create output/crashes
-	crashdir = outdir / "crashes";
-	if (!fs::create_directory(crashdir))
+	crash_path = out_path / "crashes";
+	if (!fs::create_directory(crash_path))
 	{
 		std::cout << "error: could not create output directory.. exiting." << std::endl;
 		usage(argv);

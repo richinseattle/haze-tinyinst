@@ -8,7 +8,7 @@ LLVMFuzzerMyInit(int (*Callback)(const uint8_t *Data, size_t Size), unsigned int
   Options.MaxLen = 1024000;
   Options.LenControl = true;
   Options.DoCrossOver = false;
-  Options.MutateDepth = 16;
+  Options.MutateDepth = 6;
   Options.UseCounters = false;
   Options.UseMemmem = false;
   Options.UseCmp = false;
