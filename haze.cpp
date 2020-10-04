@@ -289,13 +289,6 @@ bool prepare_queue()
 
 	std::cout << std::endl;
 	std::cout << queue_count << " of " << input_filepaths.size() << " added to queue" << std::endl;
-	/*
-	auto elapsed = std::chrono::high_resolution_clock::now() - start;
-	long ms = std::chrono::duration_cast<std::chrono::milliseconds>(elapsed).count();
-	float secs = (float)ms / 1000;
-	float execs = (float)num_iterations / secs;
-	std::cout << "Time elapsed: " << ms << "ms  average exec/s: " << execs << std::endl << std::endl;
-	*/
 	return 0;
 }
 
@@ -334,6 +327,12 @@ bool fuzz_loop()
 
 	bool done = false;
 	uint64_t loop_iteration = 0;
+	static char const spin_chars[] = "/-\\|";
+	uint64_t spin = 0;
+	float input_execs = 0;
+	bool eol = false;
+
+	printf("\n");
 	while (!done)
 	{
 		// select random input from queue
@@ -351,14 +350,14 @@ bool fuzz_loop()
 
 		auto sample = file2vec(input_file_path);
 
-		printf("Mutating [%d/%d] for %d iterations: %ws\n", input_file_idx + 1, queue_size, loop_iterations, input_file_path.filename().c_str());
-
-
 		auto iteration_loop_start_clock = std::chrono::high_resolution_clock::now();
-		long prev_elapsed = 0;
+
+		bool loop_newcov = false; // new coverage this loop?
 		for (loop_iteration = 1; loop_iteration <= loop_iterations; loop_iteration++) {
+			total_iterations++;
+
 			std::string mutator_name;
-			
+						
 			// Use libFuzzer mutate_libFuzzer_pct% of the time and spray16 the rest if -libFuzzer is passed 
 			if (loop_iteration * 100 <= loop_iterations * mutate_libFuzzer_pct)			
 			{
@@ -422,15 +421,46 @@ bool fuzz_loop()
 
 			RunTarget(target_argc, target_argv, target_pid, 0xFFFFFFFF);
 
+
+
 			Coverage newcoverage;
 			instrumentation->GetCoverage(newcoverage, true);
+
+			if (loop_iteration == 1 || newcoverage.size() > 0 || loop_iteration % 25 == 0)
+			{
+				if (loop_newcov) { printf("\n");  loop_newcov = false; eol = false; }
+
+				//printf("Mutating [%d/%d] for %d iterations: %ws\n", input_file_idx + 1, queue_size, loop_iterations, input_file_path.filename().c_str());
+				auto fuzz_loop_elapsed = std::chrono::high_resolution_clock::now() - fuzz_loop_start_clock;
+				unsigned int secs = (unsigned int)std::chrono::duration_cast<std::chrono::seconds>(fuzz_loop_elapsed).count();
+				if (secs == 0) { secs++; }
+				//float total_execs = (float)(total_iterations * 1000) / secs;
+				//std::cout << total_iterations << " total iterations. Time elapsed: " << fuzz_loop_elapsed << std::endl;
+
+				spin++;
+				char spinner = spin_chars[spin % (sizeof(spin_chars) - 1)];
+				if (eol == true) { printf("\r"); eol = false; }
+				//printf("hazing[%4d/%4d] %4d/sec | iterations: %5d (avg %d/sec) | elapsed: %s             ",
+				//	input_file_idx + 1, queue_size, (int)input_execs, total_iterations, (total_iterations / secs), elapsed_str.c_str());
+				//fflush(stdout);
+				fflush(stdout);
+				std::cout << "hazing[" << input_file_idx + 1 << "/" << queue_size << "] " << (int)input_execs << "/sec" << " | iterations: " << total_iterations << " (avg " << (total_iterations / secs) << "/sec) | elapsed: " << fuzz_loop_elapsed << "                    " << std::flush;
+				
+				eol = true;
+			}
+
 			if (newcoverage.size() > 0)
 			{
+				loop_newcov = true; 
+				if (eol == true) { printf("\n"); eol = false; }
+
 				int total_new_offsets = 0;
 				for (auto iter = newcoverage.begin(); iter != newcoverage.end(); iter++) {
+					if (eol == true) { printf("\n"); eol = false; }
 					total_new_offsets += iter->offsets.size();
 					//printf("    NEWCOV ### Iteration %6d: Found %d new offsets in %s\n", i, (int)iter->offsets.size(), iter->module_name);
 					std::cout << "    NEWCOV ### Iteration " << std::to_string(total_iterations + loop_iteration) << ": mutator[" + mutator_name + "] Found " << iter->offsets.size() << " new offsets in " << iter->module_name << std::endl;
+					std:: cout << std::flush;
 				}
 
 				auto input_filename = input_file_path.filename().string();
@@ -462,18 +492,22 @@ bool fuzz_loop()
 			instrumentation->IgnoreCoverage(newcoverage);
 
 			MergeCoverage(coverage, newcoverage);
-
 		}
-		total_iterations += loop_iterations;
 
-		auto fuzz_loop_elapsed = std::chrono::high_resolution_clock::now() - fuzz_loop_start_clock; 
+		//if (outfile) WriteCoverage(coverage, outfile);
+
 		auto iteration_loop_elapsed = std::chrono::high_resolution_clock::now() - iteration_loop_start_clock;
 		unsigned int ms = (unsigned int)std::chrono::duration_cast<std::chrono::milliseconds>(iteration_loop_elapsed).count();
-		float execs = (float)(loop_iterations * 1000) / ms;
-		std::cout << loop_iterations << " iterations complete. Time elapsed: " << ms << "ms  average exec/s: " << execs << std::endl;
-		std::cout << total_iterations << " total iterations. Time elapsed: " << fuzz_loop_elapsed << std::endl;
-		std::cout << std::endl;
-		//if (outfile) WriteCoverage(coverage, outfile);
+		input_execs = (float)(loop_iterations * 1000) / ms;
+		if (input_execs < 50) {
+			auto fuzz_loop_elapsed = std::chrono::high_resolution_clock::now() - fuzz_loop_start_clock;
+			unsigned int secs = (unsigned int)std::chrono::duration_cast<std::chrono::seconds>(fuzz_loop_elapsed).count();
+			if (secs == 0) { secs++; }
+			printf("\n\n");
+			std::cout << "hazing[" << input_file_idx + 1 << "/" << queue_size << "] " << (int)input_execs << "/sec" << " | iterations: " << total_iterations << " (avg " << (total_iterations / secs) << "/sec) | elapsed: " << fuzz_loop_elapsed << std::endl;
+			printf("DELETING SLOW INPUT (%d/sec): %ws\n\n", (int)input_execs, input_file_path.c_str());
+			fs::remove(input_file_path);
+		}
 	}
 	return true;
 }
