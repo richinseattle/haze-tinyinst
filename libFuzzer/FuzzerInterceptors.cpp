@@ -13,28 +13,24 @@
 
 #if LIBFUZZER_LINUX
 
-  #define GET_CALLER_PC() __builtin_return_address(0)
+#define GET_CALLER_PC() __builtin_return_address(0)
 
-  #define PTR_TO_REAL(x) real_##x
-  #define REAL(x) __interception::PTR_TO_REAL(x)
-  #define FUNC_TYPE(x) x##_type
-  #define DEFINE_REAL(ret_type, func, ...)            \
-    typedef ret_type (*FUNC_TYPE(func))(__VA_ARGS__); \
-    namespace __interception {                        \
-                                                      \
-    FUNC_TYPE(func) PTR_TO_REAL(func);                \
-                                                      \
-    }
+#define PTR_TO_REAL(x) real_##x
+#define REAL(x) __interception::PTR_TO_REAL(x)
+#define FUNC_TYPE(x) x##_type
+#define DEFINE_REAL(ret_type, func, ...)                                       \
+  typedef ret_type (*FUNC_TYPE(func))(__VA_ARGS__);                            \
+  namespace __interception {                                                   \
+  FUNC_TYPE(func) PTR_TO_REAL(func);                                           \
+  }
 
-  #include <cassert>
-  #include <cstdint>
-  #include <dlfcn.h>  // for dlsym()
+#include <cassert>
+#include <cstdint>
+#include <dlfcn.h> // for dlsym()
 
 static void *getFuncAddr(const char *name, uintptr_t wrapper_addr) {
-
   void *addr = dlsym(RTLD_NEXT, name);
   if (!addr) {
-
     // If the lookup using RTLD_NEXT failed, the sanitizer runtime library is
     // later in the library search order than the DSO that we are trying to
     // intercept, which means that we cannot intercept this function. We still
@@ -44,98 +40,80 @@ static void *getFuncAddr(const char *name, uintptr_t wrapper_addr) {
 
     // In case `name' is not loaded, dlsym ends up finding the actual wrapper.
     // We don't want to intercept the wrapper and have it point to itself.
-    if (reinterpret_cast<uintptr_t>(addr) == wrapper_addr) addr = nullptr;
-
+    if (reinterpret_cast<uintptr_t>(addr) == wrapper_addr)
+      addr = nullptr;
   }
-
   return addr;
-
 }
 
-static int  FuzzerInited = 0;
+static int FuzzerInited = 0;
 static bool FuzzerInitIsRunning;
 
 static void fuzzerInit();
 
 static void ensureFuzzerInited() {
-
   assert(!FuzzerInitIsRunning);
-  if (!FuzzerInited) { fuzzerInit(); }
-
+  if (!FuzzerInited) {
+    fuzzerInit();
+  }
 }
 
 static int internal_strcmp_strncmp(const char *s1, const char *s2, bool strncmp,
                                    size_t n) {
-
   size_t i = 0;
   while (true) {
-
     if (strncmp) {
-
-      if (i == n) break;
+      if (i == n)
+        break;
       i++;
-
     }
-
     unsigned c1 = *s1;
     unsigned c2 = *s2;
-    if (c1 != c2) return (c1 < c2) ? -1 : 1;
-    if (c1 == 0) break;
+    if (c1 != c2)
+      return (c1 < c2) ? -1 : 1;
+    if (c1 == 0)
+      break;
     s1++;
     s2++;
-
   }
-
   return 0;
-
 }
 
 static int internal_strncmp(const char *s1, const char *s2, size_t n) {
-
   return internal_strcmp_strncmp(s1, s2, true, n);
-
 }
 
 static int internal_strcmp(const char *s1, const char *s2) {
-
   return internal_strcmp_strncmp(s1, s2, false, 0);
-
 }
 
 static int internal_memcmp(const void *s1, const void *s2, size_t n) {
-
   const uint8_t *t1 = static_cast<const uint8_t *>(s1);
   const uint8_t *t2 = static_cast<const uint8_t *>(s2);
   for (size_t i = 0; i < n; ++i, ++t1, ++t2)
-    if (*t1 != *t2) return *t1 < *t2 ? -1 : 1;
+    if (*t1 != *t2)
+      return *t1 < *t2 ? -1 : 1;
   return 0;
-
 }
 
 static size_t internal_strlen(const char *s) {
-
   size_t i = 0;
   while (s[i])
     i++;
   return i;
-
 }
 
 static char *internal_strstr(const char *haystack, const char *needle) {
-
   // This is O(N^2), but we are not using it in hot places.
   size_t len1 = internal_strlen(haystack);
   size_t len2 = internal_strlen(needle);
-  if (len1 < len2) return nullptr;
+  if (len1 < len2)
+    return nullptr;
   for (size_t pos = 0; pos <= len1 - len2; pos++) {
-
     if (internal_memcmp(haystack + pos, needle, len2) == 0)
       return const_cast<char *>(haystack) + pos;
-
   }
-
   return nullptr;
-
 }
 
 extern "C" {
@@ -170,96 +148,83 @@ DEFINE_REAL(char *, strcasestr, const char *, const char *)
 DEFINE_REAL(void *, memmem, const void *, size_t, const void *, size_t)
 
 ATTRIBUTE_INTERFACE int bcmp(const char *s1, const char *s2, size_t n) {
-
-  if (!FuzzerInited) return internal_memcmp(s1, s2, n);
+  if (!FuzzerInited)
+    return internal_memcmp(s1, s2, n);
   int result = REAL(bcmp)(s1, s2, n);
   __sanitizer_weak_hook_memcmp(GET_CALLER_PC(), s1, s2, n, result);
   return result;
-
 }
 
 ATTRIBUTE_INTERFACE int memcmp(const void *s1, const void *s2, size_t n) {
-
-  if (!FuzzerInited) return internal_memcmp(s1, s2, n);
+  if (!FuzzerInited)
+    return internal_memcmp(s1, s2, n);
   int result = REAL(memcmp)(s1, s2, n);
   __sanitizer_weak_hook_memcmp(GET_CALLER_PC(), s1, s2, n, result);
   return result;
-
 }
 
 ATTRIBUTE_INTERFACE int strncmp(const char *s1, const char *s2, size_t n) {
-
-  if (!FuzzerInited) return internal_strncmp(s1, s2, n);
+  if (!FuzzerInited)
+    return internal_strncmp(s1, s2, n);
   int result = REAL(strncmp)(s1, s2, n);
   __sanitizer_weak_hook_strncmp(GET_CALLER_PC(), s1, s2, n, result);
   return result;
-
 }
 
 ATTRIBUTE_INTERFACE int strcmp(const char *s1, const char *s2) {
-
-  if (!FuzzerInited) return internal_strcmp(s1, s2);
+  if (!FuzzerInited)
+    return internal_strcmp(s1, s2);
   int result = REAL(strcmp)(s1, s2);
   __sanitizer_weak_hook_strcmp(GET_CALLER_PC(), s1, s2, result);
   return result;
-
 }
 
 ATTRIBUTE_INTERFACE int strncasecmp(const char *s1, const char *s2, size_t n) {
-
   ensureFuzzerInited();
   int result = REAL(strncasecmp)(s1, s2, n);
   __sanitizer_weak_hook_strncasecmp(GET_CALLER_PC(), s1, s2, n, result);
   return result;
-
 }
 
 ATTRIBUTE_INTERFACE int strcasecmp(const char *s1, const char *s2) {
-
   ensureFuzzerInited();
   int result = REAL(strcasecmp)(s1, s2);
   __sanitizer_weak_hook_strcasecmp(GET_CALLER_PC(), s1, s2, result);
   return result;
-
 }
 
 ATTRIBUTE_INTERFACE char *strstr(const char *s1, const char *s2) {
-
-  if (!FuzzerInited) return internal_strstr(s1, s2);
+  if (!FuzzerInited)
+    return internal_strstr(s1, s2);
   char *result = REAL(strstr)(s1, s2);
   __sanitizer_weak_hook_strstr(GET_CALLER_PC(), s1, s2, result);
   return result;
-
 }
 
 ATTRIBUTE_INTERFACE char *strcasestr(const char *s1, const char *s2) {
-
   ensureFuzzerInited();
   char *result = REAL(strcasestr)(s1, s2);
   __sanitizer_weak_hook_strcasestr(GET_CALLER_PC(), s1, s2, result);
   return result;
-
 }
 
 ATTRIBUTE_INTERFACE
 void *memmem(const void *s1, size_t len1, const void *s2, size_t len2) {
-
   ensureFuzzerInited();
   void *result = REAL(memmem)(s1, len1, s2, len2);
   __sanitizer_weak_hook_memmem(GET_CALLER_PC(), s1, len1, s2, len2, result);
   return result;
-
 }
 
 __attribute__((section(".preinit_array"),
                used)) static void (*__local_fuzzer_preinit)(void) = fuzzerInit;
 
-}  // extern "C"
+} // extern "C"
 
 static void fuzzerInit() {
-
   assert(!FuzzerInitIsRunning);
-  if (FuzzerInited) return;
+  if (FuzzerInited)
+    return;
   FuzzerInitIsRunning = true;
 
   REAL(bcmp) = reinterpret_cast<memcmp_type>(
@@ -283,8 +248,6 @@ static void fuzzerInit() {
 
   FuzzerInitIsRunning = false;
   FuzzerInited = 1;
-
 }
 
 #endif
-

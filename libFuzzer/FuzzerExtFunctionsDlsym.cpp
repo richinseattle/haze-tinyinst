@@ -13,48 +13,39 @@
 #include "FuzzerPlatform.h"
 #if LIBFUZZER_APPLE
 
-  #include "FuzzerExtFunctions.h"
-  #include "FuzzerIO.h"
-  #include <dlfcn.h>
+#include "FuzzerExtFunctions.h"
+#include "FuzzerIO.h"
+#include <dlfcn.h>
 
 using namespace fuzzer;
 
 template <typename T>
 static T GetFnPtr(const char *FnName, bool WarnIfMissing) {
-
-  dlerror();  // Clear any previous errors.
+  dlerror(); // Clear any previous errors.
   void *Fn = dlsym(RTLD_DEFAULT, FnName);
   if (Fn == nullptr) {
-
     if (WarnIfMissing) {
-
       const char *ErrorMsg = dlerror();
       Printf("WARNING: Failed to find function \"%s\".", FnName);
-      if (ErrorMsg) Printf(" Reason %s.", ErrorMsg);
+      if (ErrorMsg)
+        Printf(" Reason %s.", ErrorMsg);
       Printf("\n");
-
     }
-
   }
-
   return reinterpret_cast<T>(Fn);
-
 }
 
 namespace fuzzer {
 
 ExternalFunctions::ExternalFunctions() {
-\
-  #define EXT_FUNC(NAME, RETURN_TYPE, FUNC_SIG, WARN) \
-    this->NAME = GetFnPtr<decltype(ExternalFunctions::NAME)>(#NAME, WARN)
+#define EXT_FUNC(NAME, RETURN_TYPE, FUNC_SIG, WARN)                            \
+  this->NAME = GetFnPtr<decltype(ExternalFunctions::NAME)>(#NAME, WARN)
 
-  #include "FuzzerExtFunctions.def"
+#include "FuzzerExtFunctions.def"
 
-  #undef EXT_FUNC
-
+#undef EXT_FUNC
 }
 
-}  // namespace fuzzer
+} // namespace fuzzer
 
-#endif  // LIBFUZZER_APPLE
-
+#endif // LIBFUZZER_APPLE

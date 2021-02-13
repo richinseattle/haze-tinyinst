@@ -12,52 +12,43 @@
 // to clients right now.
 //===----------------------------------------------------------------------===//
 #include "FuzzerPlatform.h"
-#if LIBFUZZER_LINUX || LIBFUZZER_NETBSD || LIBFUZZER_FUCHSIA || \
-    LIBFUZZER_FREEBSD || LIBFUZZER_OPENBSD || LIBFUZZER_EMSCRIPTEN
+#if LIBFUZZER_LINUX || LIBFUZZER_NETBSD || LIBFUZZER_FUCHSIA ||                \
+    LIBFUZZER_FREEBSD || LIBFUZZER_EMSCRIPTEN
 
-  #include "FuzzerExtFunctions.h"
-  #include "FuzzerIO.h"
+#include "FuzzerExtFunctions.h"
+#include "FuzzerIO.h"
 
 extern "C" {
+// Declare these symbols as weak to allow them to be optionally defined.
+#define EXT_FUNC(NAME, RETURN_TYPE, FUNC_SIG, WARN)                            \
+  __attribute__((weak, visibility("default"))) RETURN_TYPE NAME FUNC_SIG
 
-  // Declare these symbols as weak to allow them to be optionally defined.
-  #define EXT_FUNC(NAME, RETURN_TYPE, FUNC_SIG, WARN) \
-    __attribute__((weak, visibility("default"))) RETURN_TYPE NAME FUNC_SIG
+#include "FuzzerExtFunctions.def"
 
-  #include "FuzzerExtFunctions.def"
-
-  #undef EXT_FUNC
-
+#undef EXT_FUNC
 }
 
 using namespace fuzzer;
 
 static void CheckFnPtr(void *FnPtr, const char *FnName, bool WarnIfMissing) {
-
   if (FnPtr == nullptr && WarnIfMissing) {
-
     Printf("WARNING: Failed to find function \"%s\".\n", FnName);
-
   }
-
 }
 
 namespace fuzzer {
 
 ExternalFunctions::ExternalFunctions() {
-\
-  #define EXT_FUNC(NAME, RETURN_TYPE, FUNC_SIG, WARN)                         \
-    this->NAME = ::NAME;                                                      \
-    CheckFnPtr(reinterpret_cast<void *>(reinterpret_cast<uintptr_t>(::NAME)), \
-               #NAME, WARN);
+#define EXT_FUNC(NAME, RETURN_TYPE, FUNC_SIG, WARN)                            \
+  this->NAME = ::NAME;                                                         \
+  CheckFnPtr(reinterpret_cast<void *>(reinterpret_cast<uintptr_t>(::NAME)),    \
+             #NAME, WARN);
 
-  #include "FuzzerExtFunctions.def"
+#include "FuzzerExtFunctions.def"
 
-  #undef EXT_FUNC
-
+#undef EXT_FUNC
 }
 
-}  // namespace fuzzer
+} // namespace fuzzer
 
 #endif
-

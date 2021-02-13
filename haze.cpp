@@ -125,6 +125,7 @@ void RunTarget(int argc, char** argv, unsigned int pid, uint32_t timeout) {
 		printf("Process hanged\n");
 		instrumentation->Kill();
 		break;
+	/*
 	case DEBUGGER_IGNORE_EXCEPTION:
 		//printf("IGNORE EXCEPTION\n");
 		instrumentation->Kill();		
@@ -132,7 +133,7 @@ void RunTarget(int argc, char** argv, unsigned int pid, uint32_t timeout) {
 		//printf("Sleep(10) in DEBUGGER_IGNORE_EXCEPTION");
 		//Sleep(10);
 		break;
-
+	*/
 	case DEBUGGER_PROCESS_EXIT:
 		if (instrumentation->IsTargetFunctionDefined()) {
 			printf("Process exit during target function\n");

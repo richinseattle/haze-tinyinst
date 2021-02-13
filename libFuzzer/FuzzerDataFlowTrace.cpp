@@ -27,14 +27,11 @@
 #include <vector>
 
 namespace fuzzer {
-
 static const char *kFunctionsTxt = "functions.txt";
 
 bool BlockCoverage::AppendCoverage(const std::string &S) {
-
   std::stringstream SS(S);
   return AppendCoverage(SS);
-
 }
 
 // Coverage lines have this form:
@@ -43,38 +40,31 @@ bool BlockCoverage::AppendCoverage(const std::string &S) {
 // BBs, and X,Y,Z, if present, are the indecies of covered BB.
 // BB #0, which is the entry block, is not explicitly listed.
 bool BlockCoverage::AppendCoverage(std::istream &IN) {
-
   std::string L;
   while (std::getline(IN, L, '\n')) {
-
-    if (L.empty()) continue;
+    if (L.empty())
+      continue;
     std::stringstream SS(L.c_str() + 1);
-    size_t            FunctionId = 0;
+    size_t FunctionId  = 0;
     SS >> FunctionId;
     if (L[0] == 'F') {
-
       FunctionsWithDFT.insert(FunctionId);
       continue;
-
     }
-
     if (L[0] != 'C') continue;
     Vector<uint32_t> CoveredBlocks;
     while (true) {
-
       uint32_t BB = 0;
       SS >> BB;
       if (!SS) break;
       CoveredBlocks.push_back(BB);
-
     }
-
     if (CoveredBlocks.empty()) return false;
     uint32_t NumBlocks = CoveredBlocks.back();
     CoveredBlocks.pop_back();
     for (auto BB : CoveredBlocks)
       if (BB >= NumBlocks) return false;
-    auto  It = Functions.find(FunctionId);
+    auto It = Functions.find(FunctionId);
     auto &Counters =
         It == Functions.end()
             ? Functions.insert({FunctionId, Vector<uint32_t>(NumBlocks)})
@@ -86,11 +76,8 @@ bool BlockCoverage::AppendCoverage(std::istream &IN) {
     Counters[0]++;
     for (auto BB : CoveredBlocks)
       Counters[BB]++;
-
   }
-
   return true;
-
 }
 
 // Assign weights to each function.
@@ -99,10 +86,8 @@ bool BlockCoverage::AppendCoverage(std::istream &IN) {
 //   * a function with lots of uncovered blocks gets bigger weight.
 //   * a function with a less frequently executed code gets bigger weight.
 Vector<double> BlockCoverage::FunctionWeights(size_t NumFunctions) const {
-
   Vector<double> Res(NumFunctions);
   for (auto It : Functions) {
-
     auto FunctionID = It.first;
     auto Counters = It.second;
     assert(FunctionID < NumFunctions);
@@ -113,60 +98,47 @@ Vector<double> BlockCoverage::FunctionWeights(size_t NumFunctions) const {
     Weight /= SmallestNonZeroCounter(Counters);
     // Give higher weight to functions with the most uncovered basic blocks.
     Weight *= NumberOfUncoveredBlocks(Counters) + 1;
-
   }
-
   return Res;
-
 }
 
 void DataFlowTrace::ReadCoverage(const std::string &DirPath) {
-
   Vector<SizedFile> Files;
   GetSizedFilesFromDir(DirPath, &Files);
   for (auto &SF : Files) {
-
     auto Name = Basename(SF.File);
     if (Name == kFunctionsTxt) continue;
     if (!CorporaHashes.count(Name)) continue;
     std::ifstream IF(SF.File);
     Coverage.AppendCoverage(IF);
-
   }
-
 }
 
-static void DFTStringAppendToVector(Vector<uint8_t> *  DFT,
+static void DFTStringAppendToVector(Vector<uint8_t> *DFT,
                                     const std::string &DFTString) {
-
   assert(DFT->size() == DFTString.size());
   for (size_t I = 0, Len = DFT->size(); I < Len; I++)
     (*DFT)[I] = DFTString[I] == '1';
-
 }
 
 // converts a string of '0' and '1' into a Vector<uint8_t>
 static Vector<uint8_t> DFTStringToVector(const std::string &DFTString) {
-
   Vector<uint8_t> DFT(DFTString.size());
   DFTStringAppendToVector(&DFT, DFTString);
   return DFT;
-
 }
 
 static bool ParseError(const char *Err, const std::string &Line) {
-
   Printf("DataFlowTrace: parse error: %s: Line: %s\n", Err, Line.c_str());
   return false;
-
 }
 
 // TODO(metzman): replace std::string with std::string_view for
 // better performance. Need to figure our how to use string_view on Windows.
 static bool ParseDFTLine(const std::string &Line, size_t *FunctionNum,
                          std::string *DFTString) {
-
-  if (!Line.empty() && Line[0] != 'F') return false;  // Ignore coverage.
+  if (!Line.empty() && Line[0] != 'F')
+    return false; // Ignore coverage.
   size_t SpacePos = Line.find(' ');
   if (SpacePos == std::string::npos)
     return ParseError("no space in the trace line", Line);
@@ -178,26 +150,21 @@ static bool ParseDFTLine(const std::string &Line, size_t *FunctionNum,
   assert(Beg < End);
   size_t Len = End - Beg;
   for (size_t I = 0; I < Len; I++) {
-
     if (Beg[I] != '0' && Beg[I] != '1')
       return ParseError("the trace should contain only 0 or 1", Line);
-
   }
-
   *DFTString = Beg;
   return true;
-
 }
 
 bool DataFlowTrace::Init(const std::string &DirPath, std::string *FocusFunction,
                          Vector<SizedFile> &CorporaFiles, Random &Rand) {
-
   if (DirPath.empty()) return false;
   Printf("INFO: DataFlowTrace: reading from '%s'\n", DirPath.c_str());
   Vector<SizedFile> Files;
   GetSizedFilesFromDir(DirPath, &Files);
-  std::string         L;
-  size_t              FocusFuncIdx = SIZE_MAX;
+  std::string L;
+  size_t FocusFuncIdx = SIZE_MAX;
   Vector<std::string> FunctionNames;
 
   // Collect the hashes of the corpus files.
@@ -206,25 +173,23 @@ bool DataFlowTrace::Init(const std::string &DirPath, std::string *FocusFunction,
 
   // Read functions.txt
   std::ifstream IF(DirPlusFile(DirPath, kFunctionsTxt));
-  size_t        NumFunctions = 0;
+  size_t NumFunctions = 0;
   while (std::getline(IF, L, '\n')) {
-
     FunctionNames.push_back(L);
     NumFunctions++;
-    if (*FocusFunction == L) FocusFuncIdx = NumFunctions - 1;
-
+    if (*FocusFunction == L)
+      FocusFuncIdx = NumFunctions - 1;
   }
-
-  if (!NumFunctions) return false;
+  if (!NumFunctions)
+    return false;
 
   if (*FocusFunction == "auto") {
-
     // AUTOFOCUS works like this:
     // * reads the coverage data from the DFT files.
     // * assigns weights to functions based on coverage.
     // * chooses a random function according to the weights.
     ReadCoverage(DirPath);
-    auto           Weights = Coverage.FunctionWeights(NumFunctions);
+    auto Weights = Coverage.FunctionWeights(NumFunctions);
     Vector<double> Intervals(NumFunctions + 1);
     std::iota(Intervals.begin(), Intervals.end(), 0);
     auto Distribution = std::piecewise_constant_distribution<double>(
@@ -235,15 +200,12 @@ bool DataFlowTrace::Init(const std::string &DirPath, std::string *FocusFunction,
     Printf("INFO: AUTOFOCUS: %zd %s\n", FocusFuncIdx,
            FunctionNames[FocusFuncIdx].c_str());
     for (size_t i = 0; i < NumFunctions; i++) {
-
       if (!Weights[i]) continue;
       Printf("  [%zd] W %g\tBB-tot %u\tBB-cov %u\tEntryFreq %u:\t%s\n", i,
              Weights[i], Coverage.GetNumberOfBlocks(i),
              Coverage.GetNumberOfCoveredBlocks(i), Coverage.GetCounter(i, 0),
              FunctionNames[i].c_str());
-
     }
-
   }
 
   if (!NumFunctions || FocusFuncIdx == SIZE_MAX || Files.size() <= 1)
@@ -253,7 +215,6 @@ bool DataFlowTrace::Init(const std::string &DirPath, std::string *FocusFunction,
   size_t NumTraceFiles = 0;
   size_t NumTracesWithFocusFunction = 0;
   for (auto &SF : Files) {
-
     auto Name = Basename(SF.File);
     if (Name == kFunctionsTxt) continue;
     if (!CorporaHashes.count(Name)) continue;  // not in the corpus.
@@ -261,12 +222,10 @@ bool DataFlowTrace::Init(const std::string &DirPath, std::string *FocusFunction,
     // Printf("=== %s\n", Name.c_str());
     std::ifstream IF(SF.File);
     while (std::getline(IF, L, '\n')) {
-
-      size_t      FunctionNum = 0;
+      size_t FunctionNum = 0;
       std::string DFTString;
       if (ParseDFTLine(L, &FunctionNum, &DFTString) &&
           FunctionNum == FocusFuncIdx) {
-
         NumTracesWithFocusFunction++;
 
         if (FunctionNum >= NumFunctions)
@@ -275,39 +234,29 @@ bool DataFlowTrace::Init(const std::string &DirPath, std::string *FocusFunction,
         // Print just a few small traces.
         if (NumTracesWithFocusFunction <= 3 && DFTString.size() <= 16)
           Printf("%s => |%s|\n", Name.c_str(), std::string(DFTString).c_str());
-        break;  // No need to parse the following lines.
-
+        break; // No need to parse the following lines.
       }
-
     }
-
   }
-
-  Printf(
-      "INFO: DataFlowTrace: %zd trace files, %zd functions, "
-      "%zd traces with focus function\n",
-      NumTraceFiles, NumFunctions, NumTracesWithFocusFunction);
+  Printf("INFO: DataFlowTrace: %zd trace files, %zd functions, "
+         "%zd traces with focus function\n",
+         NumTraceFiles, NumFunctions, NumTracesWithFocusFunction);
   return NumTraceFiles > 0;
-
 }
 
 int CollectDataFlow(const std::string &DFTBinary, const std::string &DirPath,
                     const Vector<SizedFile> &CorporaFiles) {
-
   Printf("INFO: collecting data flow: bin: %s dir: %s files: %zd\n",
          DFTBinary.c_str(), DirPath.c_str(), CorporaFiles.size());
   if (CorporaFiles.empty()) {
-
     Printf("ERROR: can't collect data flow without corpus provided.");
     return 1;
-
   }
 
   static char DFSanEnv[] = "DFSAN_OPTIONS=warn_unimplemented=0";
   putenv(DFSanEnv);
   MkDir(DirPath);
   for (auto &F : CorporaFiles) {
-
     // For every input F we need to collect the data flow and the coverage.
     // Data flow collection may fail if we request too many DFSan tags at once.
     // So, we start from requesting all tags in range [0,Size) and if that fails
@@ -315,30 +264,23 @@ int CollectDataFlow(const std::string &DFTBinary, const std::string &DirPath,
     // Function number => DFT.
     auto OutPath = DirPlusFile(DirPath, Hash(FileToVector(F.File)));
     std::unordered_map<size_t, Vector<uint8_t>> DFTMap;
-    std::unordered_set<std::string>             Cov;
-    Command                                     Cmd;
+    std::unordered_set<std::string> Cov;
+    Command Cmd;
     Cmd.addArgument(DFTBinary);
     Cmd.addArgument(F.File);
     Cmd.addArgument(OutPath);
     Printf("CMD: %s\n", Cmd.toString().c_str());
     ExecuteCommand(Cmd);
-
   }
-
   // Write functions.txt if it's currently empty or doesn't exist.
   auto FunctionsTxtPath = DirPlusFile(DirPath, kFunctionsTxt);
   if (FileToString(FunctionsTxtPath).empty()) {
-
     Command Cmd;
     Cmd.addArgument(DFTBinary);
     Cmd.setOutputFile(FunctionsTxtPath);
     ExecuteCommand(Cmd);
-
   }
-
   return 0;
-
 }
 
 }  // namespace fuzzer
-

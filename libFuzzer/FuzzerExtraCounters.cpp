@@ -11,36 +11,22 @@
 #include "FuzzerPlatform.h"
 #include <cstdint>
 
-#if LIBFUZZER_LINUX || LIBFUZZER_NETBSD || LIBFUZZER_FREEBSD || \
-    LIBFUZZER_OPENBSD || LIBFUZZER_FUCHSIA || LIBFUZZER_EMSCRIPTEN
+#if LIBFUZZER_LINUX || LIBFUZZER_NETBSD || LIBFUZZER_FREEBSD ||                \
+    LIBFUZZER_FUCHSIA || LIBFUZZER_EMSCRIPTEN
 __attribute__((weak)) extern uint8_t __start___libfuzzer_extra_counters;
 __attribute__((weak)) extern uint8_t __stop___libfuzzer_extra_counters;
 
 namespace fuzzer {
-
-uint8_t *ExtraCountersBegin() {
-
-  return &__start___libfuzzer_extra_counters;
-
-}
-
-uint8_t *ExtraCountersEnd() {
-
-  return &__stop___libfuzzer_extra_counters;
-
-}
-
+uint8_t *ExtraCountersBegin() { return &__start___libfuzzer_extra_counters; }
+uint8_t *ExtraCountersEnd() { return &__stop___libfuzzer_extra_counters; }
 ATTRIBUTE_NO_SANITIZE_ALL
 void ClearExtraCounters() {  // hand-written memset, don't asan-ify.
-  uintptr_t *Beg = reinterpret_cast<uintptr_t *>(ExtraCountersBegin());
-  uintptr_t *End = reinterpret_cast<uintptr_t *>(ExtraCountersEnd());
+  uintptr_t *Beg = reinterpret_cast<uintptr_t*>(ExtraCountersBegin());
+  uintptr_t *End = reinterpret_cast<uintptr_t*>(ExtraCountersEnd());
   for (; Beg < End; Beg++) {
-
     *Beg = 0;
     __asm__ __volatile__("" : : : "memory");
-
   }
-
 }
 
 }  // namespace fuzzer
@@ -48,24 +34,9 @@ void ClearExtraCounters() {  // hand-written memset, don't asan-ify.
 #else
 // TODO: implement for other platforms.
 namespace fuzzer {
-
-uint8_t *ExtraCountersBegin() {
-
-  return nullptr;
-
-}
-
-uint8_t *ExtraCountersEnd() {
-
-  return nullptr;
-
-}
-
-void ClearExtraCounters() {
-
-}
-
+uint8_t *ExtraCountersBegin() { return nullptr; }
+uint8_t *ExtraCountersEnd() { return nullptr; }
+void ClearExtraCounters() {}
 }  // namespace fuzzer
 
 #endif
-
