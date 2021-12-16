@@ -1,6 +1,8 @@
 # haze
  haze binary fuzzer
 
+ *DEPRECATED* Note this version of haze was an early prototype based on tinyinst, written in C++. Haze is being rewritten as a frontend to LibAFL
+
  This is a fuzzer for Windows based on TinyInst
  Current version is a modification of litecov to perform fuzzing
 
