@@ -251,7 +251,7 @@ bool prepare_queue()
 			for(int i = 0; i < 10; i++)
 			{
 				std::error_code ec;
-				Sleep(10);
+				//Sleep(10);
 
 				if (fs::remove(cur_input_path, ec))
 				{
@@ -611,7 +611,7 @@ int main(int argc, char** argv)
 			for (int i = 0; i < 10; i++)
 			{
 				std::error_code ec;
-				Sleep(10);
+				//Sleep(10);
 				if (!fs::remove_all(out_path, ec))
 				{
 					success = true;
@@ -625,7 +625,7 @@ int main(int argc, char** argv)
 			}
 		}
 	}
-	Sleep(100);
+	//Sleep(100);
 
 	// create output directory	
 	if (!fs::create_directory(out_path))
@@ -649,8 +649,8 @@ int main(int argc, char** argv)
 		std::cout << "error: could not create output directory.. exiting." << std::endl;
 		usage(argv);
 	}
-	// Sleep to avoid filesystem sync issues. 
-	Sleep(100);
+	// Sleep to avoid filesystem sync issues. - machine specific issue? 
+	//Sleep(100);
 
 
 	if (rseed)
